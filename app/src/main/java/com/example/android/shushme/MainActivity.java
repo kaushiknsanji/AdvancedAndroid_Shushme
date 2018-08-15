@@ -19,6 +19,7 @@ package com.example.android.shushme;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -40,8 +41,13 @@ import com.google.android.gms.common.api.GoogleApiClient.ConnectionCallbacks;
 import com.google.android.gms.common.api.GoogleApiClient.OnConnectionFailedListener;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.places.Place;
+import com.google.android.gms.location.places.PlaceBufferResponse;
 import com.google.android.gms.location.places.Places;
 import com.google.android.gms.location.places.ui.PlacePicker;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
+
+import java.util.ArrayList;
 
 public class MainActivity extends AppCompatActivity implements
         ConnectionCallbacks,
@@ -55,6 +61,7 @@ public class MainActivity extends AppCompatActivity implements
     // Member variables
     private PlaceListAdapter mAdapter;
     private RecyclerView mRecyclerView;
+    private GoogleApiClient mGoogleApiClient;
 
     /**
      * Called when the activity is starting
@@ -69,15 +76,15 @@ public class MainActivity extends AppCompatActivity implements
         // Set up the recycler view
         mRecyclerView = (RecyclerView) findViewById(R.id.places_list_recycler_view);
         mRecyclerView.setLayoutManager(new LinearLayoutManager(this));
-        // TODO (3) Modify the Adapter to take a PlaceBuffer in the constructor
-        mAdapter = new PlaceListAdapter(this);
+        // COMPLETED (3) Modify the Adapter to take a PlaceBuffer in the constructor
+        mAdapter = new PlaceListAdapter(this, null);
         mRecyclerView.setAdapter(mAdapter);
 
 
         // Build up the LocationServices API client
         // Uses the addApi method to request the LocationServices API
         // Also uses enableAutoManage to automatically when to connect/suspend the client
-        GoogleApiClient client = new GoogleApiClient.Builder(this)
+        mGoogleApiClient = new GoogleApiClient.Builder(this)
                 .addConnectionCallbacks(this)
                 .addOnConnectionFailedListener(this)
                 .addApi(LocationServices.API)
@@ -87,15 +94,67 @@ public class MainActivity extends AppCompatActivity implements
 
     }
 
-    // TODO (1) Implement a method called refreshPlacesData that:
+    /**
+     * Method that refreshes the place information displayed by the RecyclerView
+     */
+    private void refreshPlacesData(){
+        //Query for the list of place ids stored in the database
+        Cursor cursor = getContentResolver().query(
+                PlaceContract.PlaceEntry.CONTENT_URI,
+                null,
+                null,
+                null,
+                null
+        );
+
+        //Read the cursor and prepare a list of placeIds
+        ArrayList<String> placeIds = new ArrayList<>();
+        try{
+            if(cursor != null && cursor.getCount() > 0){
+                while(cursor.moveToNext()){
+                    String placeId = cursor.getString(cursor.getColumnIndex(PlaceContract.PlaceEntry.COLUMN_PLACE_ID));
+                    placeIds.add(placeId);
+                }
+            }
+        } finally {
+            if(cursor != null){
+                cursor.close();
+            }
+        }
+
+        if(placeIds.size() > 0){
+            //When we have placeIds, update the RecyclerView Adapter with the refreshed place information
+            Places.getGeoDataClient(this)
+                    .getPlaceById(placeIds.toArray(new String[placeIds.size()]))
+                    //Getting the data asynchronously
+                    .addOnCompleteListener(new OnCompleteListener<PlaceBufferResponse>() {
+                        @Override
+                        public void onComplete(@NonNull Task<PlaceBufferResponse> task) {
+                            //PlaceBufferResponse contains a list of places for Ids passed
+                            if(task.isSuccessful()){
+                                //When the asynchronous task was successful
+
+                                //Get the result from the task which contains the PlaceBufferResponse
+                                PlaceBufferResponse placeBufferResponse = task.getResult();
+                                //Swap the adapter's data
+                                mAdapter.swapPlaces(placeBufferResponse);
+                            } else {
+                                Log.i(TAG, "onComplete: No Places found");
+                            }
+                        }
+                    });
+        }
+    }
+
+    // COMPLETED (1) Implement a method called refreshPlacesData that:
         // - Queries all the locally stored Places IDs
         // - Calls Places.GeoDataApi.getPlaceById with that list of IDs
         // Note: When calling Places.GeoDataApi.getPlaceById use the same GoogleApiClient created
         // in MainActivity's onCreate (you will have to declare it as a private member)
 
-    //TODO (8) Set the getPlaceById callBack so that onResult calls the Adapter's swapPlaces with the result
+    //COMPLETED (8) Set the getPlaceById callBack so that onResult calls the Adapter's swapPlaces with the result
 
-    //TODO (2) call refreshPlacesData in GoogleApiClient's onConnected and in the Add New Place button click event
+    //COMPLETED (2) call refreshPlacesData in GoogleApiClient's onConnected and in the Add New Place button click event
 
     /***
      * Called when the Google API Client is successfully connected
@@ -105,6 +164,7 @@ public class MainActivity extends AppCompatActivity implements
     @Override
     public void onConnected(@Nullable Bundle connectionHint) {
         Log.i(TAG, "API Client Connection Successful!");
+        refreshPlacesData();
     }
 
     /***
@@ -170,14 +230,14 @@ public class MainActivity extends AppCompatActivity implements
             }
 
             // Extract the place information from the API
-            String placeName = place.getName().toString();
-            String placeAddress = place.getAddress().toString();
             String placeID = place.getId();
 
             // Insert a new place into DB
             ContentValues contentValues = new ContentValues();
             contentValues.put(PlaceContract.PlaceEntry.COLUMN_PLACE_ID, placeID);
             getContentResolver().insert(PlaceContract.PlaceEntry.CONTENT_URI, contentValues);
+
+            refreshPlacesData();
         }
     }
 
@@ -200,5 +260,11 @@ public class MainActivity extends AppCompatActivity implements
         ActivityCompat.requestPermissions(MainActivity.this,
                 new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
                 PERMISSIONS_REQUEST_FINE_LOCATION);
+    }
+
+    @Override
+    protected void onDestroy() {
+        mAdapter.releaseResources();
+        super.onDestroy();
     }
 }
