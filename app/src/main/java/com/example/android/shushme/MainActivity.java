@@ -18,6 +18,7 @@ package com.example.android.shushme;
 
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
@@ -31,6 +32,8 @@ import android.support.v7.widget.RecyclerView;
 import android.util.Log;
 import android.view.View;
 import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.Switch;
 import android.widget.Toast;
 
 import com.example.android.shushme.provider.PlaceContract;
@@ -45,8 +48,11 @@ import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.places.Place;
 import com.google.android.gms.location.places.PlaceBuffer;
+import com.google.android.gms.location.places.PlaceBufferResponse;
 import com.google.android.gms.location.places.Places;
 import com.google.android.gms.location.places.ui.PlacePicker;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -64,6 +70,9 @@ public class MainActivity extends AppCompatActivity implements
     private PlaceListAdapter mAdapter;
     private RecyclerView mRecyclerView;
     private GoogleApiClient mClient;
+    private Geofencing mGeofencing;
+
+    private boolean mIsEnabled;
 
     /**
      * Called when the activity is starting
@@ -81,11 +90,30 @@ public class MainActivity extends AppCompatActivity implements
         mAdapter = new PlaceListAdapter(this, null);
         mRecyclerView.setAdapter(mAdapter);
 
-        // TODO (9) Create a boolean SharedPreference to store the state of the "Enable Geofences" switch
+        // COMPLETED (9) Create a boolean SharedPreference to store the state of the "Enable Geofences" switch
         // and initialize the switch based on the value of that SharedPreference
 
-        // TODO (10) Handle the switch's change event and Register/Unregister geofences based on the value of isChecked
+        // COMPLETED (10) Handle the switch's change event and Register/Unregister geofences based on the value of isChecked
         // as well as set a private boolean mIsEnabled to the current switch's state
+
+        //Initialize the Switch for "Enable Geofences" and handle the enable/disable switch change
+        Switch geofenceSwitch = findViewById(R.id.enable_switch);
+        mIsEnabled = getPreferences(MODE_PRIVATE).getBoolean(getString(R.string.setting_enabled), false);
+        geofenceSwitch.setChecked(mIsEnabled);
+        geofenceSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                SharedPreferences.Editor editor = getPreferences(MODE_PRIVATE).edit();
+                editor.putBoolean(getString(R.string.setting_enabled), isChecked);
+                mIsEnabled = isChecked;
+                editor.apply();
+                if(isChecked){
+                    mGeofencing.registerAllGeofences();
+                } else {
+                    mGeofencing.unRegisterAllGeofences();
+                }
+            }
+        });
 
         // Build up the LocationServices API client
         // Uses the addApi method to request the LocationServices API
@@ -98,32 +126,8 @@ public class MainActivity extends AppCompatActivity implements
                 .enableAutoManage(this, this)
                 .build();
 
-        // TODO (1) Create a Geofencing class with a Context and GoogleApiClient constructor that
-        // initializes a private member ArrayList of Geofences called mGeofenceList
-
-        // TODO (2) Inside Geofencing, implement a public method called updateGeofencesList that
-        // given a PlaceBuffer will create a Geofence object for each Place using Geofence.Builder
-        // and add that Geofence to mGeofenceList
-
-        // TODO (3) Inside Geofencing, implement a private helper method called getGeofencingRequest that
-        // uses GeofencingRequest.Builder to return a GeofencingRequest object from the Geofence list
-
-        // TODO (4) Create a GeofenceBroadcastReceiver class that extends BroadcastReceiver and override
-        // onReceive() to simply log a message when called. Don't forget to add a receiver tag in the Manifest
-
-        // TODO (5) Inside Geofencing, implement a private helper method called getGeofencePendingIntent that
-        // returns a PendingIntent for the GeofenceBroadcastReceiver class
-
-        // TODO (6) Inside Geofencing, implement a public method called registerAllGeofences that
-        // registers the GeofencingRequest by calling LocationServices.GeofencingApi.addGeofences
-        // using the helper functions getGeofencingRequest() and getGeofencePendingIntent()
-
-        // TODO (7) Inside Geofencing, implement a public method called unRegisterAllGeofences that
-        // unregisters all geofences by calling LocationServices.GeofencingApi.removeGeofences
-        // using the helper function getGeofencePendingIntent()
-
-        // TODO (8) Create a new instance of Geofencing using "this" as the context and mClient as the client
-
+        // COMPLETED (8) Create a new instance of Geofencing using "this" as the context and mClient as the client
+        mGeofencing = new Geofencing(this, mClient);
     }
 
     /***
@@ -157,29 +161,60 @@ public class MainActivity extends AppCompatActivity implements
         Log.e(TAG, "API Client Connection Failed!");
     }
 
-    public void refreshPlacesData() {
-        Uri uri = PlaceContract.PlaceEntry.CONTENT_URI;
-        Cursor data = getContentResolver().query(
-                uri,
+    /**
+     * Method that refreshes the place information displayed by the RecyclerView
+     */
+    private void refreshPlacesData(){
+        //Query for the list of place ids stored in the database
+        Cursor cursor = getContentResolver().query(
+                PlaceContract.PlaceEntry.CONTENT_URI,
                 null,
                 null,
                 null,
-                null);
-
-        if (data == null || data.getCount() == 0) return;
-        List<String> guids = new ArrayList<String>();
-        while (data.moveToNext()) {
-            guids.add(data.getString(data.getColumnIndex(PlaceContract.PlaceEntry.COLUMN_PLACE_ID)));
-        }
-        PendingResult<PlaceBuffer> placeResult = Places.GeoDataApi.getPlaceById(mClient,
-                guids.toArray(new String[guids.size()]));
-        placeResult.setResultCallback(new ResultCallback<PlaceBuffer>() {
-            @Override
-            public void onResult(@NonNull PlaceBuffer places) {
-                mAdapter.swapPlaces(places);
-                // TODO (11) Call updateGeofenceList and registerAllGeofences if mIsEnabled is true
+                null
+        );
+        //Read the cursor and prepare a list of placeIds
+        ArrayList<String> placeIds = new ArrayList<>();
+        try{
+            if(cursor != null && cursor.getCount() > 0){
+                while(cursor.moveToNext()){
+                    String placeId = cursor.getString(cursor.getColumnIndex(PlaceContract.PlaceEntry.COLUMN_PLACE_ID));
+                    placeIds.add(placeId);
+                }
             }
-        });
+        } finally {
+            if(cursor != null){
+                cursor.close();
+            }
+        }
+        if(placeIds.size() > 0){
+            //When we have placeIds, update the RecyclerView Adapter with the refreshed place information
+            Places.getGeoDataClient(this)
+                    .getPlaceById(placeIds.toArray(new String[placeIds.size()]))
+                    //Getting the data asynchronously
+                    .addOnCompleteListener(new OnCompleteListener<PlaceBufferResponse>() {
+                        @Override
+                        public void onComplete(@NonNull Task<PlaceBufferResponse> task) {
+                            //PlaceBufferResponse contains a list of places for Ids passed
+                            if(task.isSuccessful()){
+                                //When the asynchronous task was successful
+                                //Get the result from the task which contains the PlaceBufferResponse
+                                PlaceBufferResponse placeBufferResponse = task.getResult();
+                                //Swap the adapter's data
+                                mAdapter.swapPlaces(placeBufferResponse);
+                                // COMPLETED (11) Call updateGeofenceList and registerAllGeofences if mIsEnabled is true
+                                //Update list of Geofences
+                                mGeofencing.updateGeofencesList(placeBufferResponse);
+                                //Register all Geofences when the Geofences switch is enabled
+                                if(mIsEnabled) {
+                                    mGeofencing.registerAllGeofences();
+                                }
+                            } else {
+                                Log.i(TAG, "onComplete: No Places found");
+                            }
+                        }
+                    });
+        }
     }
 
     /***
@@ -225,8 +260,6 @@ public class MainActivity extends AppCompatActivity implements
             }
 
             // Extract the place information from the API
-            String placeName = place.getName().toString();
-            String placeAddress = place.getAddress().toString();
             String placeID = place.getId();
 
             // Insert a new place into DB
@@ -258,5 +291,11 @@ public class MainActivity extends AppCompatActivity implements
         ActivityCompat.requestPermissions(MainActivity.this,
                 new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
                 PERMISSIONS_REQUEST_FINE_LOCATION);
+    }
+
+    @Override
+    protected void onDestroy() {
+        mAdapter.releaseResources();
+        super.onDestroy();
     }
 }
