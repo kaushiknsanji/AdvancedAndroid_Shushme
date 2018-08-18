@@ -2,6 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.android.shushme">
 
+    <!-- Internet Access and Fine GPS for Picking the Places and its information -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Do Not Disturb Notification Access required for changing Ringer mode on devices
+    with Android API level M+ -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY"/>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -13,7 +21,8 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="insert-your-api-key-here" />
 
-        <activity android:name="com.example.android.shushme.MainActivity">
+        <activity android:name="com.example.android.shushme.MainActivity"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -29,6 +38,4 @@
 
     </application>
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>

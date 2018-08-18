@@ -16,13 +16,16 @@ package com.example.android.shushme;
 * limitations under the License.
 */
 
+import android.annotation.TargetApi;
+import android.app.NotificationManager;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
-import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
@@ -43,16 +46,15 @@ import com.google.android.gms.common.GooglePlayServicesRepairableException;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.GoogleApiClient.ConnectionCallbacks;
 import com.google.android.gms.common.api.GoogleApiClient.OnConnectionFailedListener;
-import com.google.android.gms.common.api.PendingResult;
-import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.places.Place;
-import com.google.android.gms.location.places.PlaceBuffer;
+import com.google.android.gms.location.places.PlaceBufferResponse;
 import com.google.android.gms.location.places.Places;
 import com.google.android.gms.location.places.ui.PlacePicker;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 
 import java.util.ArrayList;
-import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements
         ConnectionCallbacks,
@@ -96,7 +98,7 @@ public class MainActivity extends AppCompatActivity implements
                 SharedPreferences.Editor editor = getPreferences(MODE_PRIVATE).edit();
                 editor.putBoolean(getString(R.string.setting_enabled), isChecked);
                 mIsEnabled = isChecked;
-                editor.commit();
+                editor.apply();
                 if (isChecked) mGeofencing.registerAllGeofences();
                 else mGeofencing.unRegisterAllGeofences();
             }
@@ -149,30 +151,59 @@ public class MainActivity extends AppCompatActivity implements
         Log.e(TAG, "API Client Connection Failed!");
     }
 
-    public void refreshPlacesData() {
-        Uri uri = PlaceContract.PlaceEntry.CONTENT_URI;
-        Cursor data = getContentResolver().query(
-                uri,
+    /**
+     * Method that refreshes the place information displayed by the RecyclerView
+     */
+    private void refreshPlacesData(){
+        //Query for the list of place ids stored in the database
+        Cursor cursor = getContentResolver().query(
+                PlaceContract.PlaceEntry.CONTENT_URI,
                 null,
                 null,
                 null,
-                null);
-
-        if (data == null || data.getCount() == 0) return;
-        List<String> guids = new ArrayList<String>();
-        while (data.moveToNext()) {
-            guids.add(data.getString(data.getColumnIndex(PlaceContract.PlaceEntry.COLUMN_PLACE_ID)));
-        }
-        PendingResult<PlaceBuffer> placeResult = Places.GeoDataApi.getPlaceById(mClient,
-                guids.toArray(new String[guids.size()]));
-        placeResult.setResultCallback(new ResultCallback<PlaceBuffer>() {
-            @Override
-            public void onResult(@NonNull PlaceBuffer places) {
-                mAdapter.swapPlaces(places);
-                mGeofencing.updateGeofencesList(places);
-                if (mIsEnabled) mGeofencing.registerAllGeofences();
+                null
+        );
+        //Read the cursor and prepare a list of placeIds
+        ArrayList<String> placeIds = new ArrayList<>();
+        try{
+            if(cursor != null && cursor.getCount() > 0){
+                while(cursor.moveToNext()){
+                    String placeId = cursor.getString(cursor.getColumnIndex(PlaceContract.PlaceEntry.COLUMN_PLACE_ID));
+                    placeIds.add(placeId);
+                }
             }
-        });
+        } finally {
+            if(cursor != null){
+                cursor.close();
+            }
+        }
+        if(placeIds.size() > 0){
+            //When we have placeIds, update the RecyclerView Adapter with the refreshed place information
+            Places.getGeoDataClient(this)
+                    .getPlaceById(placeIds.toArray(new String[placeIds.size()]))
+                    //Getting the data asynchronously
+                    .addOnCompleteListener(new OnCompleteListener<PlaceBufferResponse>() {
+                        @Override
+                        public void onComplete(@NonNull Task<PlaceBufferResponse> task) {
+                            //PlaceBufferResponse contains a list of places for Ids passed
+                            if(task.isSuccessful()){
+                                //When the asynchronous task was successful
+                                //Get the result from the task which contains the PlaceBufferResponse
+                                PlaceBufferResponse placeBufferResponse = task.getResult();
+                                //Swap the adapter's data
+                                mAdapter.swapPlaces(placeBufferResponse);
+                                //Update list of Geofences
+                                mGeofencing.updateGeofencesList(placeBufferResponse);
+                                //Register all Geofences when the Geofences switch is enabled
+                                if(mIsEnabled) {
+                                    mGeofencing.registerAllGeofences();
+                                }
+                            } else {
+                                Log.i(TAG, "onComplete: No Places found");
+                            }
+                        }
+                    });
+        }
     }
 
     /***
@@ -218,8 +249,6 @@ public class MainActivity extends AppCompatActivity implements
             }
 
             // Extract the place information from the API
-            String placeName = place.getName().toString();
-            String placeAddress = place.getAddress().toString();
             String placeID = place.getId();
 
             // Insert a new place into DB
@@ -246,14 +275,42 @@ public class MainActivity extends AppCompatActivity implements
             locationPermissions.setEnabled(false);
         }
 
-        //TODO (3) Initialize ringer permissions checkbox
+        //COMPLETED (3) Initialize ringer permissions checkbox
+        //Initialize ringer permissions checkbox
+        CheckBox ringerPermissions = findViewById(R.id.ringer_permissions_checkbox);
+        NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        //Check if the API supports the ringer permission change and the permission is granted
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && notificationManager != null && !notificationManager.isNotificationPolicyAccessGranted()){
+            ringerPermissions.setChecked(false);
+        } else {
+            ringerPermissions.setChecked(true);
+            ringerPermissions.setEnabled(false);
+        }
     }
 
-    // TODO (2) Implement onRingerPermissionsClicked to launch ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
+    // COMPLETED (2) Implement onRingerPermissionsClicked to launch ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
+
+    /**
+     * Method that establishes Ringer Permissions for devices with Android API level 23+
+     *
+     * @param view The CheckBox 'R.id.ringer_permissions_checkbox' that was clicked
+     */
+    @TargetApi(Build.VERSION_CODES.M)
+    public void onRingerPermissionsClicked(View view) {
+        Intent intent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
+        startActivity(intent);
+    }
 
     public void onLocationPermissionClicked(View view) {
         ActivityCompat.requestPermissions(MainActivity.this,
                 new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
                 PERMISSIONS_REQUEST_FINE_LOCATION);
     }
+
+    @Override
+    protected void onDestroy() {
+        mAdapter.releaseResources();
+        super.onDestroy();
+    }
+
 }

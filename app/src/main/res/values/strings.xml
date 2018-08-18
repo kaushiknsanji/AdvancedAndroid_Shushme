@@ -7,6 +7,11 @@
     <string name="setting_enabled" translatable="false">EnabledSetting</string>
     <string name="settings_label">Settings</string>
     <string name="location_permissions">Location Permissions</string>
+    <string name="ringer_permissions">Ringer Permissions</string>
     <string name="enable_geofences">Enable Geofences</string>
     <string name="privacy">http://www.google.com/policies/privacy</string>
+    <string name="app_notification_channel_name">App Primary</string>
+    <string name="silent_mode_activated_notification_title">Geofence entered! Silent mode activated.</string>
+    <string name="back_to_normal_notification_title">Exited Geofence! Ringer mode is back to Normal.</string>
+    <string name="touch_to_relaunch_notification_text">Touch to launch the app.</string>
 </resources>
